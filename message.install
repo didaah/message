@@ -1,0 +1,216 @@
+<?php
+// $Id$
+
+/**
+ * @Implement of hook_schema()
+ */
+function message_schema() {
+  $schema['message_info'] = array(
+    'description' => '短消息',
+    'fields' => array(
+      'mid' => array(
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'title' => array(
+        'type' => 'varchar',
+        'length' => 128,
+        'not null' => TRUE,
+        'default' => '',
+        'description' => '主题',
+      ),
+      'body' => array(
+        'type' => 'text',
+        'not null' => FALSE,
+        'size' => 'big',
+        'description' => '消息内容'
+      ),
+      'status' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => '状态：0、草稿，1、发件箱，2、创建人删除，禁止创建人浏览',
+      ),     
+      'uid' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => '创建人，0 则为系统信息',
+      ),
+      'count' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => '收件人数量',
+      ),
+      'users' => array(
+        'type' => 'varchar',
+        'length' => 256,
+        'not null' => TRUE,
+        'default' => '',
+        'description' => '收件人帐号，多个逗号分隔',
+      ),
+      'timestamp' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => '创建时间',
+      ),
+    ),
+    'indexes' => array(
+      'uts' => array('uid', 'status', 'timestamp'),
+    ),
+    'primary key' => array('mid'),
+  );
+
+  $schema['message_system'] = array(
+    'description' => '系统全局通知',
+    'fields' => array(
+      'mid' => array(
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'title' => array(
+        'type' => 'varchar',
+        'length' => 128,
+        'not null' => TRUE,
+        'default' => '',
+        'description' => '主题',
+      ),
+      'body' => array(
+        'type' => 'text',
+        'not null' => FALSE,
+        'size' => 'big',
+        'description' => '消息内容'
+      ),
+      'uid' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => '创建人',
+      ),
+      'status' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => '状态：0、不显示，1、显示',
+      ),
+      'timestamp' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => '创建时间',
+      ),
+    ),
+    'indexes' => array(
+      'st' => array('status', 'timestamp'),
+    ),
+    'primary key' => array('mid'),
+  );
+
+  $schema['message'] = array(
+    'description' => '短消息发布关联',
+    'fields' => array(
+      'id' => array(
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'uid' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => '发件人 id，系统则为 0',
+      ),
+      'touid' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => '收件人 id',
+      ),
+      'status' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => '阅读状态：0、未读，1、已读',
+      ),
+      'tostatus' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => '收件方状态：0、正常，1、回收站，2、删除',
+      ),
+      'fromstatus' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => '发件方状态：0、正常，1、回收站，2、删除',
+      ),
+      'timestamp' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => '发件时间',
+      ),
+      'mid' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => '短消息 id',
+      ),
+      'pid' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => '回复父 id',
+      ),
+    ),
+    'indexes' => array(
+      'ttt' => array('touid', 'tostatus', 'timestamp'),
+      'tstt' => array('touid', 'status', 'tostatus', 'timestamp'),
+      'uft' => array('uid', 'fromstatus', 'timestamp'),
+      'mid' => array('mid'),
+      'pt' => array('pid', 'timestamp'),
+    ),
+    'primary key' => array('id'),
+  );
+
+  return $schema;
+}
+
+/**
+ * @Implement of hook_install()
+ */
+function message_install() {
+  return module_install_schema('install', 'message');
+}
+
+/**
+ * @Implement of hook_uninstall()
+ */
+function message_uninstall() {
+  $ret = array();
+  $ret = module_install_schema('uninstall', 'message');
+  
+  db_exec('DELETE FROM {variable} WHERE name LIKE ?', array('message_%'));
+  var_init();
+  
+  return $ret;
+}

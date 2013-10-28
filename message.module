@@ -1,0 +1,669 @@
+<?php
+// $Id$
+
+/**
+ * @Implement of hook_menu()
+ */
+function message_menu() {
+
+}
+
+/**
+ * @Implement of hook_perm()
+ */
+function message_perm() {
+  return array(
+    'message view' => t('message', '使用短信功能'),
+  );
+}
+
+// public message_send_form($account =  NULL, $touser = NULL, $redirect = NULL) {{{ 
+/**
+ * message_send_form
+ *  短信编写表单
+ * 
+ * @param object $account 
+ *  发送者用户信息，默认为当前用户
+ * @param array|string $touser
+ *  接收者用户名，1个或多个，可为空，如：
+ *    array('张三'),
+ *    array('张三', '李四', '王五')
+ *    张三
+ *    张三,李四,王五
+ * @param string $redirect
+ *  发送或保存成功后，跳转至页面
+ * @access public
+ * @return array
+ */
+function message_send_form($account =  NULL, $touser = NULL, $redirect = NULL) {
+  global $user;
+
+  // 游客不允许使用
+  if (empty($user->uid)) return false;
+
+  if (empty($account)) {
+    $account = $user;
+  }
+
+  $form = array(
+    'fields' => array(),
+    'settings' => array(
+      '#validate' => array('message_send_form_validate'),
+      '#ajax_validate' => 1,
+    ),
+  );
+
+  if (!empty($redirect)) {
+    $form['settings']['#redirect'] = url($redirect);
+  }
+
+  $data = new stdClass();
+
+  if (!empty($_GET['op'])) {
+    if (!empty($_GET['id'])) {
+      if ($obj = message_load_inbox($_GET['id'])) {
+        // 只能引用自己收到并处于收件箱内的短信
+        if ($obj->touid == $account->uid && $obj->tostatus == 0) {
+          $data = $obj->info;
+          $data->id = $obj->id;
+        }
+      }
+    } else if (!empty($_GET['mid'])) {
+      if ($obj = message_load_info($_GET['mid'])) {
+        // 只能引用自己创建并处于草稿箱或发件箱的短信
+        if ($obj->uid == $account->uid && $obj->status < 2) {
+          $data = $obj;
+        }
+      }
+     
+      /**
+       * 写短信的几种引用模式：
+       *     默认：全新的短信
+       *     draft：草稿编辑并发送(mid)
+       *     refer：转发(id)
+       *     reply：回复(id)
+       */
+      $form['fields']['op'] = array(
+        '#type' => 'hidden',
+        '#default_value' => $_GET['op'],
+        '#constant' => 1
+      );
+    }
+
+    if (!empty($data)) {
+      switch ($_GET['op']) {
+        case 'draft':
+          $form['fields']['_mid'] = array(
+            '#type' => 'hidden',
+            '#default_value' => $data->mid,
+            '#constant' => 1,
+          );
+        break;
+        case 'reply':
+          // 回复
+          $data->touser = $data->name;
+          // @TODO 所回复的短信，便于以论坛主题模式展示
+          $form['fields']['pid'] = array(
+            '#type' => 'hidden',
+            '#default_value' => $data->id,
+            '#constant' => 1,
+          );
+          $body = "\n\n\n--------------------------------------------\n";
+          $body .= t('message', '发件人：!name', array('!name' => $data->name));
+          $body .= "\n";
+          $body .= t('message', '发件时间：!time', array('!time' => format_date($data->timestamp)));
+          $body .= "\n";
+          $body .= t('message', '信件主题：!title', array('!title' => $data->title));
+          $body .= "\n--------------------------------------------\n";
+          $body .= $data->body;
+          $data->body = $body;
+          $data->title = t('message', '回复：!title', array('!title' => $data->title));
+        break;
+        case 'refer':
+          // 转发
+          $body = "\n\n\n--------------------------------------------\n";
+          $body .= t('message', '发件人：!name', array('!name' => $data->name));
+          $body .= "\n";
+          $body .= t('message', '发件时间：!time', array('!time' => format_date($data->timestamp)));
+          $body .= "\n";
+          $body .= t('message', '信件主题：!title', array('!title' => $data->title));
+          $body .= "\n--------------------------------------------\n";
+          $body .= $data->body;
+          $data->body = $body;
+      }
+    }
+  }
+
+  $form['fields']['uid'] = array(
+    '#type' => 'hidden',
+    '#constant' => 1,
+    '#default_value' => $account->uid
+  );
+
+  $form['fields']['title'] = array(
+    '#title' => t('message', '主题'),
+    '#type' => 'textfield',
+    '#default_value' => $data->title,
+    '#attributes' => array('maxLength' => 128),
+    '#description' => t('message', '不超过 128 字'),
+  );
+
+  $form['fields']['touser'] = array(
+    '#title' => t('message', '发给'),
+    '#type' => 'textfield',
+    '#default_value' => $data->touser,
+    '#autocomplete' => array(
+      'url' => url('ajax', array('query' => 'op=auto&module=message')),
+    ),
+    '#description' => t('message', '收件人帐号，多个以逗号分隔'),
+  );
+  
+  if (!empty($touser)) {
+    if (is_array($touser)) {
+      $form['fields']['#default_value'] = implode(',', $touser);
+    } else {
+      $form['fields']['#default_value'] = $touser;
+    }
+  }
+
+  $form['fields']['body'] = array(
+    '#title' => t('message', '内容'),
+    '#default_value' => $data->body,
+    '#attributes' => array('maxLength' => 20000),
+    '#type' => 'textarea',
+    '#required' => 1
+  );
+
+  $form['fields']['status'] = array(
+    '#type' => 'radio',
+    '#title' => t('message', '操作'),
+    '#required' => 1,
+    '#default_value' => 1,
+    '#options' => array(
+      t('message', '保存为草稿'),
+      t('message', '立即发送'),
+    ),
+  );
+
+  $form['fields']['button'] = array(
+    '#type' => 'submit',
+    '#submit' => 'message_send_form_submit'
+  );
+
+  return $form;
+}
+// }}}
+
+function message_send_form_validate(&$form, &$v) {
+  if (!empty($v['_dida_values']->status)) {
+    return message_send_validate($v['_dida_values']); 
+  } else if (mb_strlen($v['_dida_values']->title) > 128) {
+    return array('title' => array('#error' => array(t('message', '最多只能输入 128 个字'))));
+  }
+}
+
+function message_send_form_submit(&$form, &$v) {
+  if (!empty($v['_dida_values']->status)) {
+    if (message_send_save($v['_dida_values'], 0)) {
+      dd_set_message(t('message', '发送成功'));
+      if (empty($form['settings']['#redirect'])) {
+        $form['settings']['#redirect'] = url('user/center/message_outbox');
+      }
+    } else {
+      return false;
+    }
+  } else {
+    $v['_dida_values']->timestamp = time();
+    if (db_write_record('message_info', $v['_dida_values'])) {
+      dd_set_message(t('message', '保存成功'));
+      if (empty($form['settings']['#redirect'])) {
+        $form['settings']['#redirect'] = url('user/center/message_draft_box');
+      }
+    } else {
+      return false;
+    }
+  }
+
+  // 删除过期草稿
+  if (!empty($v['_dida_values']->_mid) && $v['_dida_values']->op == 'draft') {
+    db_exec('DELETE FROM {message_info} WHERE mid = ? AND uid = ? AND status = 0',
+    array($v['_dida_values']->_mid, $v['_dida_values']->uid));
+  }
+}
+
+// public message_send_validate($message) {{{ 
+/**
+ * message_send_validate
+ *  验证一条待发送的短信
+ * 
+ * @param object $message 
+ * @access public
+ * @return array|bool
+ *  验证通过则返回 false，未通过返回可用于 form 的错误信息
+ */
+function message_send_validate($message) {
+  $e = array();
+
+  if (empty($message->touid) && empty($message->touser)) {
+    $e['touser']['#error'][] = t('message', '收件人不能为空');
+  } else if (mb_strlen($message->title) > 128) {
+    $e['touser']['#error'][] = t('message', '主题长度最多 128 个字');
+  } else if (mb_strlen($message->body) > 20000) {
+    $e['touser']['#error'][] = t('message', '短信长度最多 20000 个字');
+  } else if (!empty($message->touser)) {
+    /**
+     * 接收人格式为：
+     * 以逗号分隔的字符串，如：张三,李四,王五
+     * 数组，如：array('张三', '李四', '王五'),
+     * 若直接赋值 $message->touid，视做传递的是 uid，不再做解析
+     */
+    if (!is_array($message->touser)) {
+      $args = field_get_string_tags($message->touser);
+    } else {
+      $args = $message->touser;
+    }
+
+    // 收件人
+    $message->touid = array();
+    if ($fetch = db_query('SELECT uid FROM {users} WHERE name IN (:name)',
+    array(':name' => $args))) {
+      foreach ($fetch as $o) {
+        $message->touid[] = $o->uid;
+      }
+    }
+  }
+
+  if (!empty($message->touid)) {
+    foreach ($message->touid as $uid) {
+      if ($message->uid == $uid) {
+        $e['touser']['#error'][] = '不能发送给自己';
+      }
+    }
+  } else {
+    $e['touser']['#error'][] = '收件人不存在';
+  }
+
+  $message->status = 1;
+
+  if (empty($e)) {
+    $e = module_invoke_all('message_send_validate', $message, $form);
+  }
+
+  return !empty($e) ? $e : false;
+}
+// }}}
+
+// public message_send_save($message, $validate = true, $error = NULL) {{{ 
+/**
+ * message_send_save
+ *  发送短信
+ * 
+ * @param object $message 
+ *  一条待发送的短信
+ * @param bool $validate 
+ *  是否验证短信
+ * @param array $error
+ *  若需要验证，且验证未通过，可通过该变量获取错误信息
+ * @access public
+ * @return bool
+ *  成功返回 true，失败或未通过验证，返回 false
+ */
+function message_send_save($message, $validate = true, &$error = NULL) {
+  if ($validate && $error = message_send_validate($message)) {
+    return false;
+  }
+
+  if (empty($message->timestamp)) {
+    $message->timestamp = time();
+  }
+
+  // 保存内容
+  if (db_write_record('message_info', $message)) {
+    $send = array(
+      'uid' => $message->uid,
+      'touid' => 0,
+      'status' => 0, // 阅读状态
+      'tostatus' => 0, // 收件方状态
+      'fromstatus' => 0, // 发件方状态
+      'timestamp' => time(), // 发件时间
+      'pid' => !empty($message->pid) ? $message->pid : 0, // 所回复的短信 id
+      'mid' => $message->mid, // 短信 id
+    );
+
+    $counts = 0;
+    $touid = array();
+    foreach ($message->touid as $uid) {
+      $send['touid'] = $uid;
+      if (db_write_record('message', $send)) {
+        // 一条短信发布成功
+        module_invoke_all('message_send_success', $send, $message);
+        if ($counts < 20) {
+          $touid[] = $uid;
+        }
+        $counts++;
+      }
+    }
+
+    if (!empty($counts)) {
+      if ($fetch = db_query('SELECT name FROM {users} WHERE uid IN (:id)', array(':id' => $touid))) {
+        $users = array();
+        foreach ($fetch as $o)  {
+          $users[] = $o->name;
+        }
+        db_exec('UPDATE {message_info} SET count = ?, users = ? WHERE mid = ?',
+          array($counts, mb_substr(implode(',', $users), 0, 256), $message->mid));
+      }
+      // 更新相关统计信息
+      message_update_count($message);
+      return true;
+    } else {
+      db_exec('UPDATE {message_info} SET status = 0 WHERE mid = ?', array($message->mid));
+      dd_set_message(t('message', '抱歉，短信发送失败'), 'error');
+    }
+  } else {
+    dd_set_message(t('message', '抱歉，短信保存失败了'), 'error');
+  }
+
+  return false;
+}
+// }}}
+
+// public message_update_count($message) {{{ 
+/**
+ * message_update_count
+ *  更新相关统计信息
+ * 
+ * @param object $message 
+ * @access public
+ * @return void
+ */
+function message_update_count($message) {
+
+}
+// }}}
+
+// public message_load_info($mid) {{{ 
+/**
+ * message_load_info
+ *  加载一条基本信息
+ * 
+ * @param int $mid 
+ * @access public
+ * @return object
+ */
+function message_load_info($mid) {
+  static $data;
+  if (!isset($data[$mid])) {
+    $data[$mid] = db_query('SELECT m.*, u.name FROM {message_info} m INNER JOIN {users} u 
+    ON m.uid = u.uid WHERE m.mid = ?', array($mid), array('return' => 'one'));
+  }
+  return $data[$mid];
+}
+// }}}
+
+// public message_load_inbox($id) {{{ 
+/**
+ * message_load_inbox
+ *  加载一条已发送短信的全部信息
+ * 
+ * @param int $id 
+ * @access public
+ * @return object
+ */
+function message_load_inbox($id) {
+  static $data;
+  if (!isset($data[$id])) {
+    if ($data[$id] = db_query('SELECT m.*, u.name FROM {message} m INNER JOIN {users} u 
+    ON m.touid = u.uid WHERE m.id = ?', array($id), array('return' => 'one'))) {
+      $data[$id]->info = message_load_info($data[$id]->mid);
+    }
+  }
+  return $data[$id];
+}
+// }}}
+
+/**
+ * @Implement of hook_user_center() 
+ */
+function message_user_center_info() {
+  $data = array(
+    'inbox' => 0,
+    'outbox' => 0,
+    'draftbox' => 0,
+    'recyclebox' => 0,
+  );
+
+  $links = array(
+    'message' => array(
+      'is_group' => 1,
+      'access_arguments' => array('message view'),
+      'list_title' => t('message', '站内短信'),
+    ),
+    'message_form' => array(
+      'group' => 'message',
+      'title' => t('message', '写短信'),
+      'page_title' => t('message', '发送站内信'),
+    ),
+    'message_inbox' => array(
+      'group' => 'message',
+      'title' => t('message', '收件箱(!count)', array('!count' => $data['inbox'])),
+      'page_title' => t('message', '收件箱'),
+    ),
+    'message_outbox' => array(
+      'group' => 'message',
+      'title' => t('mssage', '发件箱(!count)', array('!count' => $data['outbox'])),
+      'page_title' => t('mssage', '发件箱'),
+    ),
+    'message_draft_box' => array(
+      'group' => 'message',
+      'title' => t('message', '草稿箱(!count)', array('!count' => $data['draftbox'])),
+      'page_title' => t('message', '草稿箱'),
+    ),
+    'message_recycle_box' => array(
+      'group' => 'message',
+      'title' => t('message', '回收站(!count)', array('!count' => $data['recyclebox'])),
+      'page_title' => t('message', '回收站'),
+    ),
+    'message_inbox_view' => array(
+      'group' => 'message',
+      'link_hide' => 1,
+      'title' => t('message', '收信浏览'),
+    ),
+    'message_outbox_view' => array(
+      'group' => 'message',
+      'link_hide' => 1,
+      'title' => t('message', '发信浏览'),
+    ),
+    'message_inbox_remove' => array(
+      'group' => 'message',
+      'link_hide' => 1,
+      'title' => t('message', '移除收信'),
+    ),
+    'message_outbox_remove' => array(
+      'group' => 'message',
+      'link_hide' => 1,
+      'title' => t('message', '移除发信'),
+    ),
+    'message_restore' => array(
+      'group' => 'message',
+      'link_hide' => 1,
+      'title' => t('message', '恢复收信'),
+    ),
+    'message_recycle_delete' => array(
+      'group' => 'message',
+      'link_hide' => 1,
+      'title' => t('message', '从回收站删除'),
+    ),
+    'message_draft_delete' => array(
+      'group' => 'message',
+      'link_hide' => 1,
+      'title' => t('message', '删除草稿'),
+    ),
+  );
+
+  return $links;
+}
+
+/**
+ * @Implement of hook_user_center_view()
+ */
+function message_user_center_view($center) {
+  module_include_file('_user_center.inc', 'message');
+  $type = message_user_center_info();
+  if (!empty($type[$center->type])) {
+    dd_add_css(dd_get_path('module', 'message') . '/message.css');
+    $center->tabs = _message_user_center_tabs();
+    $function = '_message_user_center_' . $center->type;
+    $function($center);
+  }
+}
+
+// protected _message_user_center_tabs() {{{ 
+/**
+ * _message_user_center_tabs
+ * 
+ * @access protected
+ * @return array
+ */
+function _message_user_center_tabs() {
+  return array(
+    l(t('message', '写短信'), 'user/center/message_form'),
+    l(t('message', '收件箱'), 'user/center/message_inbox'),
+    l(t('message', '发件箱'), 'user/center/message_outbox'),
+    l(t('message', '草稿箱'), 'user/center/message_draft_box'),
+    l(t('message', '回收站'), 'user/center/message_recycle_box')
+  );
+}
+// }}}
+
+/**
+ * @Implement of hook_system_tools_ajax()
+ */
+function message_system_tools_ajax($v, $g) {
+  switch ($g['op']) {
+    case 'auto':
+      dd_set_header('Content-Type: text/plain; charset=utf-8');
+      $json['error'] = 1;
+      if (!empty($v['value'])) {
+        $json['error'] = 0;
+
+        $value = $v['value'];
+        $prefix = '';
+
+        if (strpos($value, ',') !== false || strpos($value, '，') !== false) {
+          $arr = array_unique(explode(',', str_replace('，', ',', $value)));
+          if (count($arr) < 2) {
+            $json['error'] = 1;
+            break;
+          }
+
+          $value = trim(array_pop($arr));
+
+          if (empty($value)) break;
+
+          $prefix = implode(',', $arr) . ',';
+        }
+
+        if ($fetch = db_query('SELECT name FROM {users} WHERE name LIKE ? 
+        ORDER BY active DESC', array('%' . $value . '%'), array('limit' => 10))) {
+          foreach ($fetch as $o) {
+            if (empty($arr) || !in_array($o->name, $arr)) {
+              $json['contents'][] = $prefix . $o->name;
+            }
+          }
+        }
+      }
+    return json_encode($json);
+  }
+}
+
+// public message_outbox_remove($mid) {{{ 
+/**
+ * message_outbox_remove
+ *  从发件箱删除一条短信，删除后，发件人无法再浏览该短信
+ * 
+ * @param int $mid 
+ *  短信 mid
+ * @access public
+ * @return bool
+ *  成功返回 true，失败 false
+ */
+function message_outbox_remove($mid) {
+  return db_exec('UPDATE {message_info} SET status = 2 WHERE mid = ?', array($mid));
+}
+// }}}
+
+// public message_outbox_remove_validate($mid, $account = NULL) {{{ 
+/**
+ * message_outbox_remove_validate
+ *  验证用户是否具有从发件箱删除当前短信的权限
+ * 
+ * @param int $mid 
+ *  短信 mid
+ * @param object $account
+ *  一个用户，默认为当前用户
+ * @access public
+ * @return bool
+ *  可移除返回 true，不可移除返回 false
+ */
+function message_outbox_remove_validate($mid, $account = NULL) {
+  if (empty($account)) {
+    $uid = $GLOBALS['user']->uid;
+  } else {
+    $uid = $account->uid;
+  }
+
+  if (db_query('SELECT mid FROM {message_info} WHERE mid = ? AND uid = ? AND status < 2',
+  array($mid, $uid), array('return' => 'column'))) {
+    return true;
+  } else {
+    return false;
+  }
+} 
+// }}}
+
+// public message_inbox_remove($id) {{{ 
+/**
+ * message_inbox_remove
+ *  从收件箱移除一条短信，移除后短信进入回收站，收件人无法浏览
+ * 
+ * @param int $id 
+ *  收件 id，即 message 表 id
+ * @access public
+ * @return bool
+ *  成功返回 true，失败 false
+ */
+function message_inbox_remove($id) {
+  return db_exec('UPDATE {message} SET tostatus = 1 WHERE id = ?', array($id));
+}
+// }}}
+
+// public message_inbox_remove_validate($id, $account = NULL) {{{ 
+/**
+ * message_inbox_remove_validate
+ *  验证用户是否具有从收件箱移除当前短信的权限
+ * 
+ * @param int $id 
+ *  收件 id，即 message 表 id
+ * @param object $account
+ *  一个用户，默认为当前用户
+ * @access public
+ * @return bool
+ *  可移除返回 true，不可移除返回 false
+ */
+function message_inbox_remove_validate($id, $account = NULL) {
+  if (empty($account)) {
+    $uid = $GLOBALS['user']->uid;
+  } else {
+    $uid = $account->uid;
+  }
+
+  if (db_query('SELECT id FROM {message} WHERE id = ? AND touid = ? AND tostatus = 0',
+  array($id, $uid), array('return' => 'column'))) {
+    return true;
+  } else {
+    return false;
+  }
+} 
+// }}}
+

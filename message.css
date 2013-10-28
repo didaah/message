@@ -1,0 +1,15 @@
+/*$Id$*/
+.message_inbox_list_status_0 {
+  color: #f00;
+}
+
+#message_inbox_view_wrapper .body {
+  padding: 6px 0;
+  margin: 5px 0;
+  border-top: 1px solid #ccc;
+}
+
+#message_inbox_view_wrapper {
+  margin: 5px 0;
+  border-bottom: 1px solid #ccc;
+}

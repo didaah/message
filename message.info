@@ -1,0 +1,9 @@
+<?php
+// $Id$
+
+$info = array(
+  'name' => '短消息',
+  'description' => '提供站内短消息功能',
+  'ver' => '1.0',
+  'language' => 'zh-hans',
+);
