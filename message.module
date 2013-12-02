@@ -353,8 +353,16 @@ function message_send_save($message, $validate = true, &$error = NULL) {
         db_exec('UPDATE {message_info} SET count = ?, users = ? WHERE mid = ?',
           array($counts, mb_substr(implode(',', $users), 0, 256), $message->mid));
       }
-      // 更新相关统计信息
-      message_update_count($message);
+
+      if (!empty($message->uid)) {
+        message_update_count('set', $message->uid);
+      }
+      if (!empty($touid)) {
+        foreach ($touid as $uid) {
+          message_update_count('get', $uid);
+          message_update_count('new', $uid);
+        }
+      }
       return true;
     } else {
       db_exec('UPDATE {message_info} SET status = 0 WHERE mid = ?', array($message->mid));
@@ -368,17 +376,106 @@ function message_send_save($message, $validate = true, &$error = NULL) {
 }
 // }}}
 
-// public message_update_count($message) {{{ 
+// public message_update_count($type, $uid) {{{ 
 /**
  * message_update_count
  *  更新相关统计信息
  * 
- * @param object $message 
+ * @param string $type 
+ *  若为 set，则更新 发件箱和草稿箱，即统计 message_info 表
+ *  若为 get，则更新收件箱和回收站总数，即统计 message 表，
+ *  若为 new，则更新新邮件总数
+ * @param mixed $uid 
  * @access public
  * @return void
  */
-function message_update_count($message) {
+function message_update_count($type = 'set', $uid) {
+  if (empty($uid)) return false;
 
+  static $data;
+
+  if (empty($data)) {
+    if ($cache = cache_get('message_count_' . $uid)) {
+      $data = $cache->data;
+    } else {
+      $data = array(
+        'new' => 0,
+        'inbox' => 0,
+        'outbox' => 0,
+        'draftbox' => 0,
+        'recyclebox' => 0,
+      );
+    }
+  }
+ 
+  switch ($type) {
+    case 'new':
+      if ($count = db_query('SELECT COUNT(*) FROM {message} WHERE touid = ? AND status = 0 
+      AND tostatus = 0 ORDER BY timestamp ASC', array($uid), array('return' => 'column'))) {
+        $data['new'] = $count;
+      } else {
+        $data['new'] = 0;
+      }
+    break;
+    case 'get':
+      // 更新收件箱
+      $data['inbox'] = 0;
+      $data['recyclebox'] = 0;
+      if ($fetch = db_query('SELECT COUNT(*) AS c, tostatus FROM {message} 
+      WHERE touid = ? GROUP BY tostatus ORDER BY timestamp ASC', array($uid))) {
+        foreach ($fetch as $o) {
+          if ($o->tostatus == 0) {
+            // 收件数量
+            $data['inbox'] = $o->c;
+          } else if ($o->tostatus == 1) {
+            // 回收站数量
+            $data['recyclebox'] = $o->c;
+          }
+        }
+      }
+    break;
+    case 'set':
+      // 更新发件箱、草稿箱数量
+      $data['outbox'] = 0;
+      $data['draftbox'] = 0;
+      if ($fetch = db_query('SELECT COUNT(*) AS c, status FROM {message_info} 
+      WHERE uid = ? GROUP BY status ORDER BY timestamp ASC', array($uid))) {
+        foreach ($fetch as $o) {
+          if ($o->status == 0) {
+            // 草稿
+            $data['draftbox'] = $o->c;
+          } else if ($o->status == 1) {
+            // 发件
+            $data['outbox'] = $o->c;
+          }
+        }
+      }
+    break;
+  }
+
+  cache_set('message_count_' . $uid, $data);
+
+  return $data;
+}
+// }}}
+
+// public message_get_count($uid) {{{ 
+/**
+ * message_get_count
+ *  获取短信计数
+ * 
+ * @param int $uid 
+ * @access public
+ * @return array
+ */
+function message_get_count($uid) {
+  if ($cache = cache_get('message_count_' . $uid)) {
+    return $cache->data;
+  } else {
+    message_update_count('set', $uid);
+    message_update_count('get', $uid);
+    return message_update_count('new', $uid);
+  }
 }
 // }}}
 
@@ -426,12 +523,7 @@ function message_load_inbox($id) {
  * @Implement of hook_user_center() 
  */
 function message_user_center_info() {
-  $data = array(
-    'inbox' => 0,
-    'outbox' => 0,
-    'draftbox' => 0,
-    'recyclebox' => 0,
-  );
+  $data = message_get_count($GLOBALS['user']->uid);
 
   $links = array(
     'message' => array(
@@ -589,7 +681,14 @@ function message_system_tools_ajax($v, $g) {
  *  成功返回 true，失败 false
  */
 function message_outbox_remove($mid) {
-  return db_exec('UPDATE {message_info} SET status = 2 WHERE mid = ?', array($mid));
+  if (db_exec('UPDATE {message_info} SET status = 2 WHERE mid = ?', array($mid))) {
+    if ($uid = db_exec('SELECT uid FROM {message_info} WHERE mid = ?', array($mid), array('return' => 'column'))) {
+      message_update_count('set', $uid);
+    }
+    return true;
+  } else {
+    return false;
+  }
 }
 // }}}
 
@@ -634,7 +733,15 @@ function message_outbox_remove_validate($mid, $account = NULL) {
  *  成功返回 true，失败 false
  */
 function message_inbox_remove($id) {
-  return db_exec('UPDATE {message} SET tostatus = 1 WHERE id = ?', array($id));
+  if (db_exec('UPDATE {message} SET tostatus = 1 WHERE id = ?', array($id))) {
+    if ($uid = db_exec('SELECT touid FROM {message} WHERE id = ?', array($id), array('return' => 'column'))) {
+      message_update_count('get', $uid);
+      message_update_count('new', $uid);
+    }
+    return true;
+  } else {
+    return false;
+  }
 }
 // }}}
 

@@ -216,6 +216,7 @@ function _message_user_center_message_restore($center) {
   if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     if (db_exec('UPDATE {message} SET tostatus = 0 WHERE id = ? AND touid = ? AND tostatus = 1',
     array(arg(3), $center->user->uid))) {
+      message_update_count('get', $center->user->uid);
       echo 'tr';
       exit;
     }
@@ -239,12 +240,13 @@ function _message_user_center_message_recycle_delete($center) {
   if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     if (db_exec('UPDATE {message} SET tostatus = 2 WHERE id = ? AND touid = ? AND tostatus = 1',
     array(arg(3), $center->user->uid))) {
+      message_update_count('get', $center->user->uid);
       echo 'tr';
       exit;
     }
   }
 
-  echo t('message', '恢复失败，请重试');
+  echo t('message', '删除失败，请重试');
   exit;
 }
 // }}}
@@ -262,6 +264,7 @@ function _message_user_center_message_draft_delete($center) {
   if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     if (db_exec('DELETE FROM {message_info} WHERE mid = ? AND uid = ? AND status = 0',
     array(arg(3), $center->user->uid))) {
+      message_update_count('set', $center->user->uid);
       dd_log('message', t('message', '删除草稿(id：!id)', array('!id' => arg(3))));
       echo 'tr';
       exit;
@@ -416,7 +419,9 @@ function _message_user_center_message_inbox_view($center) {
 
   // 修改短信阅读状态
   if (empty($data->status)) {
-    db_exec('UPDATE {message} SET status = 1 WHERE id = ?', array($data->id));
+    if (db_exec('UPDATE {message} SET status = 1 WHERE id = ?', array($data->id))) {
+      message_update_count('new', $center->user->uid);
+    }
   }
 
   $center->body = theme('item_list', $item, NULL, 'ul', array('id' => 'message_inbox_view_wrapper'));
