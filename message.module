@@ -774,3 +774,13 @@ function message_inbox_remove_validate($id, $account = NULL) {
 } 
 // }}}
 
+/**
+ * @Implement of hook_user_load()
+ */
+function message_user_load($ac) {
+  if (!empty($ac->uid)) {
+    if ($data = message_get_count($ac->uid)) {
+      $ac->message = $data;
+    }
+  }
+}
