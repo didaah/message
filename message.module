@@ -479,6 +479,19 @@ function message_get_count($uid) {
 }
 // }}}
 
+/**
+ * @file Implement of hook_message_inti()
+ */
+function message_init() {
+  global $user;
+  if ($data = message_get_count($user->uid)) {
+    if (!empty($data['new'])) {
+      dd_set_help(t('message', '你有 !count 条新短信，请<a href="!url" title="查看短信">点击此处</a>查收',
+        array('!count' => $data['new'], '!url' => url('user/center/message_inbox'))));
+    }
+  }
+}
+
 // public message_load_info($mid) {{{ 
 /**
  * message_load_info
