@@ -453,7 +453,13 @@ function message_update_count($type = 'set', $uid) {
     break;
   }
 
-  cache_set('message_count_' . $uid, $data);
+  global $user;
+
+  if ($user->uid == $uid) {
+    $user->message = $data;
+  }
+
+  cache_del('cid', 'message_count_' . $uid);
 
   return $data;
 }
