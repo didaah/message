@@ -59,6 +59,10 @@ function message_send_form($account =  NULL, $touser = NULL, $redirect = NULL) {
 
   $data = new stdClass();
 
+  if (!empty($_GET['name'])) {
+    $data->touser = urldecode($_GET['name']);
+  }
+
   if (!empty($_GET['op'])) {
     if (!empty($_GET['id'])) {
       if ($obj = message_load_inbox($_GET['id'])) {
