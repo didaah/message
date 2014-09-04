@@ -463,7 +463,7 @@ function message_update_count($type = 'set', $uid) {
     $user->message = $data;
   }
 
-  cache_del('cid', 'message_count_' . $uid);
+  cache_set('message_count_' . $uid, $data);
 
   return $data;
 }
